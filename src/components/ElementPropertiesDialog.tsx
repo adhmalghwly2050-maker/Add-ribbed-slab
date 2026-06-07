@@ -19,9 +19,6 @@ interface SlabPropsData {
   finishLoad: number;
   liveLoad: number;
   cover: number;
-  type?: 'solid' | 'ribbed';
-  direction?: 'auto' | 'one-way-x' | 'one-way-y' | 'two-way';
-  ribDirection?: 'x' | 'y';
 }
 
 interface ElementPropertiesDialogProps {
@@ -44,9 +41,6 @@ interface ElementPropertiesDialogProps {
     finishLoad?: number;
     liveLoad?: number;
     cover?: number;
-    type?: 'solid' | 'ribbed';
-    direction?: 'auto' | 'one-way-x' | 'one-way-y' | 'two-way';
-    ribDirection?: 'x' | 'y';
     nodeIRestraints?: EndRelease;
     nodeJRestraints?: EndRelease;
     applyToUpperFloors?: boolean;
@@ -64,9 +58,6 @@ export default function ElementPropertiesDialog({
   const [finishLoad, setFinishLoad] = useState(0);
   const [liveLoad, setLiveLoad] = useState(0);
   const [cover, setCover] = useState(0);
-  const [type, setType] = useState<'solid' | 'ribbed'>('solid');
-  const [direction, setDirection] = useState<'auto' | 'one-way-x' | 'one-way-y' | 'two-way'>('auto');
-  const [ribDirection, setRibDirection] = useState<'x' | 'y'>('x');
   const [releaseI, setReleaseI] = useState<EndRelease>({ ux: false, uy: false, uz: false, rx: false, ry: false, rz: false });
   const [releaseJ, setReleaseJ] = useState<EndRelease>({ ux: false, uy: false, uz: false, rx: false, ry: false, rz: false });
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -88,9 +79,6 @@ export default function ElementPropertiesDialog({
       setLiveLoad(slabProps.liveLoad);
       setCover(slabProps.cover);
       setThickness(slabProps.thickness);
-      setType(slabProps.type || 'solid');
-      setDirection(slabProps.direction || 'auto');
-      setRibDirection(slabProps.ribDirection || 'x');
     }
     if (nodeI) setReleaseI({ ...nodeI.restraints });
     if (nodeJ) setReleaseJ({ ...nodeJ.restraints });
@@ -107,16 +95,7 @@ export default function ElementPropertiesDialog({
         applyToUpperFloors: isColumn ? applyToUpperFloors : undefined,
       });
     } else if (area) {
-      onSave({ 
-        areaId: area.id, 
-        thickness, 
-        finishLoad, 
-        liveLoad, 
-        cover,
-        type,
-        direction,
-        ribDirection
-      });
+      onSave({ areaId: area.id, thickness, finishLoad, liveLoad, cover });
     }
     onClose();
   };
@@ -238,55 +217,6 @@ export default function ElementPropertiesDialog({
           {isArea && (
             <div className="space-y-3">
               <h4 className="text-sm font-semibold text-foreground">خصائص البلاطة</h4>
-              
-              {/* Slab Type Selector */}
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground font-medium">نوع البلاطة (Slab Type)</label>
-                <select
-                  value={type}
-                  onChange={e => {
-                    const newType = e.target.value as 'solid' | 'ribbed';
-                    setType(newType);
-                    if (newType === 'ribbed') {
-                      setDirection('auto');
-                    }
-                  }}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <option value="solid">بلاطة مصمتة (Solid Slab)</option>
-                  <option value="ribbed">بلاطة هوردي ذات اتجاه واحد (One-Way Ribbed Slab)</option>
-                </select>
-              </div>
-
-              {/* Conditional Direction Selector */}
-              {type === 'solid' ? (
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground font-medium">نظام نقل الأحمال (Load Distribution)</label>
-                  <select
-                    value={direction}
-                    onChange={e => setDirection(e.target.value as any)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  >
-                    <option value="auto">تلقائي (حسب نسبة الأبعاد ACI)</option>
-                    <option value="one-way-x">اتجاه واحد أفقي (One-Way X) - على الجسور الرأسية</option>
-                    <option value="one-way-y">اتجاه واحد رأسي (One-Way Y) - على الجسور الأفقية</option>
-                    <option value="two-way">اتجاهين (Two-Way) - على جميع الجسور الداعمة</option>
-                  </select>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground font-medium">اتجاه الأعصاب (Rib Direction)</label>
-                  <select
-                    value={ribDirection}
-                    onChange={e => setRibDirection(e.target.value as 'x' | 'y')}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  >
-                    <option value="x">أعصاب موازية لـ X (تحمل على الجسور الرأسية)</option>
-                    <option value="y">أعصاب موازية لـ Y (تحمل على الجسور الأفقية)</option>
-                  </select>
-                </div>
-              )}
-
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-xs text-muted-foreground">السماكة (مم)</label>
@@ -310,25 +240,20 @@ export default function ElementPropertiesDialog({
                 </div>
               </div>
 
-              {(() => {
-                const calculatedOwnWeight = (thickness / 1000 * 25) * (type === 'ribbed' ? 0.65 : 1.0);
-                return (
-                  <div className="bg-muted/50 rounded-lg p-3 space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">الوزن الذاتي (Own Weight)</span>
-                      <span className="font-mono">{calculatedOwnWeight.toFixed(2)} kN/m²</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">إجمالي الحمل الميت</span>
-                      <span className="font-mono">{(calculatedOwnWeight + finishLoad).toFixed(2)} kN/m²</span>
-                    </div>
-                    <div className="flex justify-between text-xs font-semibold">
-                      <span className="text-muted-foreground">الحمل النهائي (1.2D + 1.6L)</span>
-                      <span className="font-mono">{(1.2 * (calculatedOwnWeight + finishLoad) + 1.6 * liveLoad).toFixed(2)} kN/m²</span>
-                    </div>
-                  </div>
-                );
-              })()}
+              <div className="bg-muted/50 rounded-lg p-3 space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">الوزن الذاتي</span>
+                  <span className="font-mono">{(thickness / 1000 * 25).toFixed(2)} kN/m²</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">إجمالي الحمل الميت</span>
+                  <span className="font-mono">{(thickness / 1000 * 25 + finishLoad).toFixed(2)} kN/m²</span>
+                </div>
+                <div className="flex justify-between text-xs font-semibold">
+                  <span className="text-muted-foreground">الحمل النهائي (1.2D + 1.6L)</span>
+                  <span className="font-mono">{(1.2 * (thickness / 1000 * 25 + finishLoad) + 1.6 * liveLoad).toFixed(2)} kN/m²</span>
+                </div>
+              </div>
             </div>
           )}
 

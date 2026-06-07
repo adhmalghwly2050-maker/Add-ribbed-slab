@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
 
-const tempZip = path.join(process.cwd(), 'repo.zip');
+const tempZip = path.join(process.cwd(), 'repo_clean.zip');
 
 async function main() {
   if (!fs.existsSync(tempZip)) {

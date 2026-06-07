@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "Structural Analysis and Foundation Designer",
+  "description": "An advanced structural engineering tool for slab load transfer, 3D frame analysis, column load extraction, ETABS comparison, and foundation design.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

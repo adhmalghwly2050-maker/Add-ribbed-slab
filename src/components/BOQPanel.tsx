@@ -174,11 +174,8 @@ export default function BOQPanel({
     let slabVolume = 0;
     for (const s of filteredSlabs) {
       const area = Math.abs(s.x2 - s.x1) * Math.abs(s.y2 - s.y1); // m²
-      const thickMm = (s as any).thickness ?? slabProps.thickness;
-      const thickness = thickMm / 1000; // mm → m
-      // Ribbed slab concrete volume is mostly hollow blocks, roughly 45% actual concrete volume
-      const concreteFactor = (s as any).type === 'ribbed' ? 0.45 : 1.0;
-      slabVolume += area * thickness * concreteFactor;
+      const thickness = slabProps.thickness / 1000; // mm → m
+      slabVolume += area * thickness;
     }
 
     // Beams: b × effectiveH × length (mm → m)
@@ -187,17 +184,8 @@ export default function BOQPanel({
       const length = b.length; // already in meters
       const bm = b.b / 1000; // mm → m
       const hm = b.h / 1000;
-      // Get nearby slab to subtract its localized thickness parameter
-      const adjacentSlab = filteredSlabs.find(s => {
-        const sx = (s.x1 + s.x2) / 2;
-        const sy = (s.y1 + s.y2) / 2;
-        const bx = (b.x1 + b.x2) / 2;
-        const by = (b.y1 + b.y2) / 2;
-        return Math.sqrt((sx - bx) ** 2 + (sy - by) ** 2) < 4.0;
-      });
-      const activeThick = (adjacentSlab as any)?.thickness ?? slabProps.thickness;
-      // Subtract active slab thickness from beam height to avoid double counting
-      const effectiveH = Math.max(hm - activeThick / 1000, hm * 0.5);
+      // Subtract slab thickness from beam height to avoid double counting
+      const effectiveH = Math.max(hm - slabProps.thickness / 1000, hm * 0.5);
       beamVolume += bm * effectiveH * length;
     }
 
@@ -259,7 +247,7 @@ export default function BOQPanel({
       if (!c.design) continue;
       const Lm = c.L / 1000;
       if (c.design.dia && c.design.bars) {
-        addWeight(colSteel, c.design.dia, Lm + 1.0, c.design.bars); // الرئيسية تمتد متر فوق العمود
+        addWeight(colSteel, c.design.dia, Lm + 0.8, c.design.bars);
       }
       const stirMatch = c.design.stirrups?.match(/Φ(\d+)@(\d+)/);
       if (stirMatch) {
@@ -485,9 +473,7 @@ export default function BOQPanel({
                 )}
                 {filteredColumns.length > 0 && (
                   <TableRow>
-                    <TableCell className="text-xs font-medium">
-                      {storyFilter === 'all' ? 'الأعمدة' : `الأعمدة (${filterLabel})`}
-                    </TableCell>
+                    <TableCell className="text-xs font-medium">الأعمدة (دور أرضي)</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{filteredColumns.length}</TableCell>
                     <TableCell className="text-xs">م³</TableCell>
                     <TableCell className="font-mono text-xs font-bold">{concreteData.colVolume.toFixed(2)}</TableCell>

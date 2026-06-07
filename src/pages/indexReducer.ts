@@ -209,7 +209,7 @@ export const defaultSlabs: Slab[] = [
 ];
 
 const defaultStories: Story[] = [
-  { id: 'ST1', label: 'الدور الأول', height: 3000, elevation: 0 },
+  { id: 'ST1', label: 'الدور الأول', height: 4000, elevation: 0 },
 ];
 
 function recalcElevations(stories: Story[]): Story[] {
@@ -231,8 +231,8 @@ export const initialState: AppState = {
   beamH: 400,
   colB: 300,
   colH: 400,
-  colL: 3000,
-  colLBelow: 3000,
+  colL: 4000,
+  colLBelow: 4000,
   colTopEndCondition: 'F' as const,
   colBottomEndCondition: 'F' as const,
   manualColumnsGenerated: false,
@@ -314,8 +314,7 @@ function coreReducer(state: AppState, action: AppAction): AppState {
       return { ...state, slabs: state.slabs.filter((_, i) => i !== action.index), manualColumnsGenerated: false, manualBeamsGenerated: false, analyzed: false };
     case 'UPDATE_SLAB': {
       const updated = [...state.slabs];
-      const isStringKey = action.key === 'id' || action.key === 'storyId' || action.key === 'type' || action.key === 'direction' || action.key === 'ribDirection';
-      (updated[action.index] as any)[action.key] = isStringKey ? action.value : parseFloat(action.value) || 0;
+      (updated[action.index] as any)[action.key] = (action.key === 'id' || action.key === 'storyId') ? action.value : parseFloat(action.value) || 0;
       return { ...state, slabs: updated, manualColumnsGenerated: false, manualBeamsGenerated: false, analyzed: false };
     }
     case 'UPDATE_SLAB_VERTICES': {
@@ -345,26 +344,8 @@ function coreReducer(state: AppState, action: AppAction): AppState {
       return { ...state, colB: action.value, analyzed: false };
     case 'SET_COL_H':
       return { ...state, colH: action.value, analyzed: false };
-    case 'SET_COL_L': {
-      const updatedStories = state.stories.map(s => ({ ...s, height: action.value }));
-      const nextExtraColumns = state.extraColumns.map(c => ({ ...c, L: action.value }));
-      const nextColOverrides = { ...state.colOverrides };
-      for (const key of Object.keys(nextColOverrides)) {
-        if (nextColOverrides[key]) {
-          const copy = { ...nextColOverrides[key] };
-          delete copy.L;
-          nextColOverrides[key] = copy;
-        }
-      }
-      return { 
-        ...state, 
-        colL: action.value, 
-        stories: recalcElevations(updatedStories), 
-        extraColumns: nextExtraColumns, 
-        colOverrides: nextColOverrides, 
-        analyzed: false 
-      };
-    }
+    case 'SET_COL_L':
+      return { ...state, colL: action.value, analyzed: false };
     case 'SET_COL_L_BELOW':
       return { ...state, colLBelow: action.value, analyzed: false };
     case 'SET_COL_TOP_END_CONDITION':
@@ -534,26 +515,7 @@ function coreReducer(state: AppState, action: AppAction): AppState {
     }
     case 'UPDATE_STORY': {
       const updated = state.stories.map(s => s.id === action.storyId ? { ...s, ...action.updates } : s);
-      let nextExtraColumns = state.extraColumns;
-      let nextColOverrides = state.colOverrides;
-      if (action.updates.height !== undefined && action.updates.height !== null) {
-        nextExtraColumns = state.extraColumns.map(c => {
-          if (c.storyId === action.storyId) {
-            return { ...c, L: action.updates.height };
-          }
-          return c;
-        });
-        // Clear L overrides in colOverrides to ensure uniform column heights
-        nextColOverrides = { ...state.colOverrides };
-        for (const key of Object.keys(nextColOverrides)) {
-          if (nextColOverrides[key]) {
-            const copy = { ...nextColOverrides[key] };
-            delete copy.L;
-            nextColOverrides[key] = copy;
-          }
-        }
-      }
-      return { ...state, stories: recalcElevations(updated), extraColumns: nextExtraColumns, colOverrides: nextColOverrides, analyzed: false };
+      return { ...state, stories: recalcElevations(updated), analyzed: false };
     }
     case 'SELECT_STORY':
       return { ...state, selectedStoryId: action.storyId };

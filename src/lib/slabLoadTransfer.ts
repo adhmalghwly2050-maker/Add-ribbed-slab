@@ -153,6 +153,15 @@ export function buildSlabEdgeLoads(
     const peakDL = wDL * (lx / 2) * areaFactor;
     const peakLL = wLL * (lx / 2) * areaFactor;
 
+    const sType = slab.type || 'solid';
+    const sDirection = slab.direction || 'auto';
+    const sRibDirection = slab.ribDirection || 'x';
+
+    let resolvedDirection = sDirection;
+    if (sType === 'ribbed') {
+      resolvedDirection = sRibDirection === 'y' ? 'one-way-y' : 'one-way-x';
+    }
+
     const edges = [
       { direction: 'horizontal' as const, x1: minX, y1: minY, x2: maxX, y2: minY, isLongSide: width >= ly - EPS },
       { direction: 'horizontal' as const, x1: minX, y1: maxY, x2: maxX, y2: maxY, isLongSide: width >= ly - EPS },
@@ -161,8 +170,30 @@ export function buildSlabEdgeLoads(
     ];
 
     for (const edge of edges) {
-      const profileDL = buildEdgeProfile(peakDL, edge.isLongSide, beta, lx, ly);
-      const profileLL = buildEdgeProfile(peakLL, edge.isLongSide, beta, lx, ly);
+      let profileDL: LineLoadPoint[] = [];
+      let profileLL: LineLoadPoint[] = [];
+
+      if (resolvedDirection === 'one-way-x') {
+        if (edge.direction === 'vertical') {
+          const pkDL_X = wDL * (width / 2) * areaFactor;
+          const pkLL_X = wLL * (width / 2) * areaFactor;
+          profileDL = [{ t: 0, wy: pkDL_X }, { t: 1, wy: pkDL_X }];
+          profileLL = [{ t: 0, wy: pkLL_X }, { t: 1, wy: pkLL_X }];
+        }
+      } else if (resolvedDirection === 'one-way-y') {
+        if (edge.direction === 'horizontal') {
+          const pkDL_Y = wDL * (height / 2) * areaFactor;
+          const pkLL_Y = wLL * (height / 2) * areaFactor;
+          profileDL = [{ t: 0, wy: pkDL_Y }, { t: 1, wy: pkDL_Y }];
+          profileLL = [{ t: 0, wy: pkLL_Y }, { t: 1, wy: pkLL_Y }];
+        }
+      } else {
+        // 'two-way' or 'auto'
+        const resolvedBeta = resolvedDirection === 'two-way' ? Math.min(beta, 2.0) : beta;
+        profileDL = buildEdgeProfile(peakDL, edge.isLongSide, resolvedBeta, lx, ly);
+        profileLL = buildEdgeProfile(peakLL, edge.isLongSide, resolvedBeta, lx, ly);
+      }
+
       if (profileDL.length === 0 && profileLL.length === 0) continue;
 
       edgeLoads.push({

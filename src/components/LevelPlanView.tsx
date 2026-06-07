@@ -292,9 +292,17 @@ export default function LevelPlanView({
           }
         }
       } else if (type === 'slab') {
-        if (onElementLongPress) {
-          onElementLongPress('slab', id);
-          return;
+        const slab = slabsAtLevel.find(s => s.id === id);
+        if (slab) {
+          setEditDialog({
+            open: true, type: 'slab', id, label: id,
+            b: 0, h: 0,
+            length: 0, thickness: 160,
+            topEnd: 'F', bottomEnd: 'F',
+            x: (slab.x1 + slab.x2) / 2, y: (slab.y1 + slab.y2) / 2,
+            releaseI: { ...defaultRelease }, releaseJ: { ...defaultRelease },
+            orientAngle: 0,
+          });
         }
       }
       // For beams: onEditBeamProperties already called above with return

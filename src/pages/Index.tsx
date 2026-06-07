@@ -237,7 +237,7 @@ const Index = () => {
   const {
     stories, selectedStoryId,
     slabs, mat, slabProps, beamB, beamH, colB, colH, colL, colLBelow, colTopEndCondition, colBottomEndCondition,
-    analyzed, frameResults: rawFrameResults, bobConnections, selectedEngine, ignoreSlab, beamStiffnessFactor, colStiffnessFactor,
+    analyzed, frameResults, bobConnections, selectedEngine, ignoreSlab, beamStiffnessFactor, colStiffnessFactor,
     activeTab, mode, activeTool, pendingNode,
     selectedNodeId, selectedFrameId, selectedAreaId,
     removedColumnIds, removedBeamIds, beamOverrides, colOverrides, slabPropsOverrides, extraBeams, extraColumns, etabsImportMode, etabsAnalysisData, titleBlockConfig, supportRestraints, frameEndReleases, transientFrameEndReleases,
@@ -258,25 +258,6 @@ const Index = () => {
     () => ({ ...frameEndReleases, ...transientFrameEndReleases }),
     [frameEndReleases, transientFrameEndReleases],
   );
-
-  const enrichedSlabs = React.useMemo(() => {
-    return slabs.map((s, idx) => {
-      const areaId = idx + 1;
-      const override = slabPropsOverrides[areaId] || {};
-      return {
-        ...s,
-        ...override,
-        type: override.type ?? s.type ?? 'solid',
-        direction: override.direction ?? s.direction ?? 'auto',
-        ribDirection: override.ribDirection ?? s.ribDirection ?? 'x',
-        thickness: override.thickness ?? s.thickness ?? slabProps.thickness,
-        finishLoad: override.finishLoad ?? s.finishLoad ?? slabProps.finishLoad,
-        liveLoad: override.liveLoad ?? s.liveLoad ?? slabProps.liveLoad,
-        cover: override.cover ?? s.cover ?? slabProps.cover,
-        phiSlab: override.phiSlab ?? s.phiSlab ?? slabProps.phiSlab,
-      };
-    });
-  }, [slabs, slabPropsOverrides, slabProps]);
 
   // Main bottom navigation tab
   const [mainTab, setMainTab] = React.useState<MainTab>('inputs');
@@ -517,7 +498,7 @@ const Index = () => {
         const _ov2 = colOverrides[colId] ?? {};
         const _merged = { ..._ov0, ..._ov1, ..._ov2 };
         const ov = Object.keys(_merged).length > 0 ? _merged : undefined;
-        const colHeight = storyHeight; // Force columns to always have the height of the story as requested
+        const colHeight = ov?.L ?? storyHeight;
         // Derive bottom end condition from per-support DOF restraints
         const supportKey = `${c.x.toFixed(2)}_${c.y.toFixed(2)}_${storyElev}`;
         const sr = supportRestraints?.[supportKey];
@@ -547,19 +528,10 @@ const Index = () => {
     }
     // Add extra columns
     for (const c of extraColumns) {
-      const story = stories.find(s => s.id === c.storyId);
-      const storyHeight = story ? (story.height ?? colL) : colL;
-      const storyElev = story ? (story.elevation ?? 0) : 0;
-      const ov = colOverrides[c.id];
-      const colHeight = storyHeight; // Force columns to always have the height of the story as requested
       allCols.push({
         ...c,
-        b: ov?.b ?? c.b,
-        h: ov?.h ?? c.h,
-        L: colHeight,
-        zBottom: c.zBottom ?? storyElev,
-        zTop: c.zTop ?? (storyElev + colHeight),
-        orientAngle: ov?.orientAngle ?? (c as any).orientAngle,
+        zBottom: c.zBottom ?? 0,
+        zTop: c.zTop ?? (c.L || 0),
       });
     }
     return allCols;
@@ -745,23 +717,14 @@ const Index = () => {
       const storyActiveBeams = b.storyId
         ? activeBeams.filter(ab => ab.storyId === b.storyId)
         : activeBeams;
-      const loads = calculateBeamLoads(b, enrichedSlabs, slabProps, mat, storyActiveBeams);
+      const loads = calculateBeamLoads(b, slabs, slabProps, mat, storyActiveBeams);
       const wallLoad = beamOverrides[b.id]?.wallLoad || b.wallLoad || 0;
       return { ...b, deadLoad: loads.deadLoad + wallLoad, liveLoad: loads.liveLoad, wallLoad };
     });
     // Detect eccentricities: beams whose endpoints fall within a column footprint
     // but are offset from its centroid (ETABS rigid-end-offset equivalent).
     return snapBeamsToEccentricColumns(beamsWithLoadValues, columns);
-  }, [beams, enrichedSlabs, slabProps, mat, beamOverrides, removedBeamIds, columns]);
-
-  const frameResults = useMemo(() => {
-    return postprocessFrameResultsForColumnFaces(
-      rawFrameResults,
-      columns,
-      beamsWithLoads,
-      effectiveFrameEndReleases
-    );
-  }, [rawFrameResults, columns, beamsWithLoads, effectiveFrameEndReleases]);
+  }, [beams, slabs, slabProps, mat, beamOverrides, removedBeamIds, columns]);
 
   const getBeamDisplayName = useCallback((beamId: string, mergedCarrierIds?: string[] | null) => {
     if (mergedCarrierIds && mergedCarrierIds.length >= 2) {
@@ -773,35 +736,8 @@ const Index = () => {
       return beamId;
     }
     
-    // Check if this beamId has a split format X-N (e.g., 66-2)
-    const m = beamId.match(/^(.+)-(\d+)$/);
-    if (m) {
-      const baseId = m[1];
-      const existingPartsCount = beamsWithLoads.filter(b => b.id.match(new RegExp(`^${baseId}-\\d+$`))).length;
-      if (existingPartsCount === 1) {
-        const beam = beamsWithLoads.find(b => b.id === beamId);
-        if (beam && beam.name) {
-          return beam.name.replace(/-\d+$/, '');
-        }
-        return baseId;
-      }
-    }
-    
     const beam = beamsWithLoads.find(b => b.id === beamId);
     if (beam && beam.name) {
-      const nm = beam.name.match(/^(.+)-(\d+)$/);
-      if (nm) {
-        const baseName = nm[1];
-        const bId = beam.id;
-        const bIdM = bId.match(/^(.+)-(\d+)$/);
-        if (bIdM) {
-          const baseId = bIdM[1];
-          const existingPartsCount = beamsWithLoads.filter(b => b.id.match(new RegExp(`^${baseId}-\\d+$`))).length;
-          if (existingPartsCount === 1) {
-            return baseName;
-          }
-        }
-      }
       return beam.name;
     }
     
@@ -810,9 +746,6 @@ const Index = () => {
       const parts = beamsWithLoads.filter(b => b.id.startsWith(parentId + '-'));
       const namedPart = parts.find(p => p.name);
       if (namedPart && namedPart.name) {
-        if (parts.length === 1) {
-          return namedPart.name.replace(/-\d+$/, '');
-        }
         const indexSuffix = beamId.slice(beamId.lastIndexOf('-'));
         const cleanName = namedPart.name.replace(/-\d+$/, '');
         return cleanName + indexSuffix;
@@ -881,7 +814,7 @@ const Index = () => {
       beamsWithLoads,
       columns,
       mat,
-      slabs: enrichedSlabs,
+      slabs,
       slabProps,
       selectedEngine,
       ignoreSlab,
@@ -1037,71 +970,6 @@ const Index = () => {
   }, [releaseEditorData]);
 
   const beamDesigns = useMemo(() => {
-    // Helper to calculate the support half-width (mm) along the longitudinal direction of a beam
-    const getSupportHalfWidth = (
-      beam: Beam,
-      isEndTo: boolean
-    ): number => {
-      const x = isEndTo ? beam.x2 : beam.x1;
-      const y = isEndTo ? beam.y2 : beam.y1;
-      const colId = isEndTo ? beam.toCol : beam.fromCol;
-
-      // 1. Try column support by ID or proximity
-      let col = columns.find(
-        c => !c.isRemoved && (c.id === colId || (Math.abs(c.x - x) < 0.05 && Math.abs(c.y - y) < 0.05))
-      );
-
-      // 2. Try column physical footprint overlap for non-concentric beams
-      if (!col) {
-        col = columns.find((column) => {
-          if (column.isRemoved) return false;
-          const θ = ((column.orientAngle ?? 0) * Math.PI) / 180;
-          const bHalf = column.b / 2000;
-          const hHalf = column.h / 2000;
-          const xHalf = Math.abs(bHalf * Math.cos(θ)) + Math.abs(hHalf * Math.sin(θ));
-          const yHalf = Math.abs(bHalf * Math.sin(θ)) + Math.abs(hHalf * Math.cos(θ));
-
-          const dx = Math.abs(column.x - x);
-          const dy = Math.abs(column.y - y);
-          return dx <= xHalf + 0.15 && dy <= yHalf + 0.15;
-        });
-      }
-
-      if (col) {
-        const theta = ((col.orientAngle ?? 0) * Math.PI) / 180;
-        const bH = col.b / 2;
-        const hH = col.h / 2;
-        const isHoriz = beam.direction === 'horizontal';
-        return isHoriz
-          ? Math.abs(bH * Math.cos(theta)) + Math.abs(hH * Math.sin(theta))
-          : Math.abs(bH * Math.sin(theta)) + Math.abs(hH * Math.cos(theta));
-      }
-
-      // 2. Try beam support (BOB connection)
-      const crossingBeam = beamsWithLoads.find(ob => {
-        if (ob.id === beam.id) return false;
-        if (ob.direction === beam.direction) return false;
-
-        if (ob.direction === 'horizontal') {
-          const xMin = Math.min(ob.x1, ob.x2) - 0.1;
-          const xMax = Math.max(ob.x1, ob.x2) + 0.1;
-          const yMatch = Math.abs(ob.y1 - y) < 0.1;
-          return yMatch && (x >= xMin && x <= xMax);
-        } else {
-          const yMin = Math.min(ob.y1, ob.y2) - 0.1;
-          const yMax = Math.max(ob.y1, ob.y2) + 0.1;
-          const xMatch = Math.abs(ob.x1 - x) < 0.1;
-          return xMatch && (y >= yMin && y <= yMax);
-        }
-      });
-
-      if (crossingBeam) {
-        return crossingBeam.b / 2;
-      }
-
-      return 0;
-    };
-
     // ── مسار ETABS: تصميم من نتائج ETABS المستوردة ──
     if (designSource === 'etabs' && etabsAnalysisData.length > 0) {
       const designs: {
@@ -1163,14 +1031,9 @@ const Index = () => {
           effectiveFlangeWidth = Math.min(span * 1000 / 4, effectiveBeam.b + 16 * slabProps.thickness, widths.reduce((a, b) => a + b, 0) * 1000);
         }
 
-        const c_left = getSupportHalfWidth(effectiveBeam as Beam, false);
-        const c_right = getSupportHalfWidth(effectiveBeam as Beam, true);
-        const reducedMleft = Math.max(0, Math.abs(ed.Mleft) - Math.abs(ed.Vu) * (c_left / 1000));
-        const reducedMright = Math.max(0, Math.abs(ed.Mright) - Math.abs(ed.Vu) * (c_right / 1000));
-
-        const flexLeft  = designFlexure(reducedMleft,  effectiveBeam.b, effectiveBeam.h, mat.fc, mat.fy);
+        const flexLeft  = designFlexure(ed.Mleft,  effectiveBeam.b, effectiveBeam.h, mat.fc, mat.fy);
         const flexMid   = designFlexure(ed.Mmid,   effectiveBeam.b, effectiveBeam.h, mat.fc, mat.fy, 40, hasSlabs, slabProps.thickness, effectiveFlangeWidth, 4);
-        const flexRight = designFlexure(reducedMright, effectiveBeam.b, effectiveBeam.h, mat.fc, mat.fy);
+        const flexRight = designFlexure(ed.Mright, effectiveBeam.b, effectiveBeam.h, mat.fc, mat.fy);
         const wuBeam = 1.2 * (effectiveBeam.deadLoad || 0) + 1.6 * (effectiveBeam.liveLoad || 0);
         const AsForShear = Math.max(flexLeft.As, flexMid.As, flexRight.As);
         const shear = designShear(ed.Vu, effectiveBeam.b, effectiveBeam.h, mat.fc, mat.fyt, 40, mat.stirrupDia || 10, wuBeam, 300, AsForShear);
@@ -1178,7 +1041,7 @@ const Index = () => {
 
         designs.push({
           beamId: ed.beamId, frameId: '', span,
-          Mleft: ed.Mleft < 0 ? -reducedMleft : reducedMleft, Mmid: ed.Mmid, Mright: ed.Mright < 0 ? -reducedMright : reducedMright, Vu: ed.Vu,
+          Mleft: ed.Mleft, Mmid: ed.Mmid, Mright: ed.Mright, Vu: ed.Vu,
           Rleft: 0, Rright: 0,
           flexLeft, flexMid, flexRight, shear, deflection,
         });
@@ -1260,15 +1123,10 @@ const Index = () => {
         );
       }
 
-      const c_left = getSupportHalfWidth(beamA, false);
-      const c_right = getSupportHalfWidth(beamB, true);
-      const reducedMleft = Math.max(0, envMleft - Math.abs(primaryResult.Rleft || 0) * (c_left / 1000));
-      const reducedMright = Math.max(0, envMright - Math.abs(contResult.Rright || 0) * (c_right / 1000));
-
-      const flexLeft = designFlexure(reducedMleft, designBeam.b, designBeam.h, mat.fc, mat.fy);
+      const flexLeft = designFlexure(envMleft, designBeam.b, designBeam.h, mat.fc, mat.fy);
       const flexMid = designFlexure(envMmid, designBeam.b, designBeam.h, mat.fc, mat.fy, 40,
         hasSlabs, slabProps.thickness, effectiveFlangeWidth, 4);
-      const flexRight = designFlexure(reducedMright, designBeam.b, designBeam.h, mat.fc, mat.fy);
+      const flexRight = designFlexure(envMright, designBeam.b, designBeam.h, mat.fc, mat.fy);
       const wuBeam = 1.2 * designBeam.deadLoad + 1.6 * designBeam.liveLoad;
       const AsForShear = Math.max(flexLeft.As, flexMid.As, flexRight.As);
       const shear = designShear(envVu, designBeam.b, designBeam.h, mat.fc, mat.fyt, 40, mat.stirrupDia || 10, wuBeam, 300, AsForShear);
@@ -1278,7 +1136,7 @@ const Index = () => {
       // Push ONE merged design entry for the primary beam ID
       designs.push({
         beamId: primaryId, frameId: primaryFrame.frameId, span: totalSpan,
-        Mleft: primaryResult.Mleft < 0 ? -reducedMleft : reducedMleft, Mmid: envMmid, Mright: contResult.Mright < 0 ? -reducedMright : reducedMright,
+        Mleft: primaryResult.Mleft, Mmid: envMmid, Mright: contResult.Mright,
         Vu: envVu,
         Rleft: primaryResult.Rleft || 0, Rright: contResult.Rright || 0,
         flexLeft, flexMid, flexRight, shear, deflection,
@@ -1338,15 +1196,10 @@ const Index = () => {
           );
         }
 
-        const c_left = getSupportHalfWidth(beam, false);
-        const c_right = getSupportHalfWidth(beam, true);
-        const reducedMleft = Math.max(0, Math.abs(br.Mleft) - Math.abs(br.Rleft || 0) * (c_left / 1000));
-        const reducedMright = Math.max(0, Math.abs(br.Mright) - Math.abs(br.Rright || 0) * (c_right / 1000));
-
-        const flexLeft = designFlexure(reducedMleft, beam.b, beam.h, mat.fc, mat.fy);
+        const flexLeft = designFlexure(Math.abs(br.Mleft), beam.b, beam.h, mat.fc, mat.fy);
         const flexMid = designFlexure(br.Mmid, beam.b, beam.h, mat.fc, mat.fy, 40,
           hasSlabs, slabProps.thickness, effectiveFlangeWidth, 4);
-        const flexRight = designFlexure(reducedMright, beam.b, beam.h, mat.fc, mat.fy);
+        const flexRight = designFlexure(Math.abs(br.Mright), beam.b, beam.h, mat.fc, mat.fy);
         const wuBeam = 1.2 * beam.deadLoad + 1.6 * beam.liveLoad;
         const AsForShear = Math.max(flexLeft.As, flexMid.As, flexRight.As);
         const shear = designShear(br.Vu, beam.b, beam.h, mat.fc, mat.fyt, 40, mat.stirrupDia || 10, wuBeam, 300, AsForShear);
@@ -1359,7 +1212,7 @@ const Index = () => {
         const deflection = calculateDeflection(br.span, beam.b, beam.h, mat.fc, beam.deadLoad, beam.liveLoad, flexMid.As, endCondition, 'B', AsPrimeForDefl, 1.0, 60);
         designs.push({
           beamId: br.beamId, frameId: fr.frameId, span: br.span,
-          Mleft: br.Mleft < 0 ? -reducedMleft : reducedMleft, Mmid: br.Mmid, Mright: br.Mright < 0 ? -reducedMright : reducedMright, Vu: br.Vu,
+          Mleft: br.Mleft, Mmid: br.Mmid, Mright: br.Mright, Vu: br.Vu,
           Rleft: br.Rleft || 0, Rright: br.Rright || 0,
           flexLeft, flexMid, flexRight, shear, deflection,
         });
@@ -1430,15 +1283,10 @@ const Index = () => {
         );
       }
 
-      const c_left = getSupportHalfWidth(leftPart.beam, false);
-      const c_right = getSupportHalfWidth(rightPart.beam, true);
-      const reducedMleft = Math.max(0, Mleft - Math.abs(leftPart.br.Rleft || 0) * (c_left / 1000));
-      const reducedMright = Math.max(0, Mright - Math.abs(rightPart.br.Rright || 0) * (c_right / 1000));
-
-      const flexLeft  = designFlexure(reducedMleft,  refBeam.b, refBeam.h, mat.fc, mat.fy);
+      const flexLeft  = designFlexure(Mleft,  refBeam.b, refBeam.h, mat.fc, mat.fy);
       const flexMid   = designFlexure(Mmid,   refBeam.b, refBeam.h, mat.fc, mat.fy, 40,
         hasSlabs, slabProps.thickness, effectiveFlangeWidth, 4);
-      const flexRight = designFlexure(reducedMright, refBeam.b, refBeam.h, mat.fc, mat.fy);
+      const flexRight = designFlexure(Mright, refBeam.b, refBeam.h, mat.fc, mat.fy);
       const wuBeam = 1.2 * refBeam.deadLoad + 1.6 * refBeam.liveLoad;
       const AsForShear = Math.max(flexLeft.As, flexMid.As, flexRight.As);
       const shear = designShear(Vu, refBeam.b, refBeam.h, mat.fc, mat.fyt, 40,
@@ -1451,9 +1299,9 @@ const Index = () => {
         beamId: baseId,
         frameId: leftPart.frameId,
         span: totalSpan,
-        Mleft: -reducedMleft,
+        Mleft: -Mleft,
         Mmid,
-        Mright: -reducedMright,
+        Mright: -Mright,
         Vu,
         Rleft:  leftPart.br.Rleft  ?? 0,
         Rright: rightPart.br.Rright ?? 0,
@@ -1463,7 +1311,7 @@ const Index = () => {
     }
 
     return designs;
-  }, [frameResults, beamsWithLoads, columns, mat, analyzed, bobConnections, slabs, slabProps, designSource, designExecuted, etabsAnalysisData]);
+  }, [frameResults, beamsWithLoads, mat, analyzed, bobConnections, slabs, slabProps, designSource, designExecuted, etabsAnalysisData]);
 
   // Map of canonical beamId → merged part IDs (for split beams like 67 → [67-1, 67-2, 67-3])
   const splitBeamGroups = useMemo<Record<string, string[]>>(() => {
@@ -1548,15 +1396,12 @@ const Index = () => {
       else if (hasHingeJ) beamHinges2D.set(beam.id, 'J');
     }
     // Use beam-on-beam analysis when applicable (same as runAnalysis)
-    let raw: FrameResult[] = [];
     if (removedColumnIds.length > 0 && detectedConnections.length > 0) {
       const result = analyzeWithBeamOnBeam(frames, bMap, columns, mat, removedColumnIds, detectedConnections, 10, 0.01, beamHinges2D, beamStiffnessFactor, colStiffnessFactor);
-      raw = result.frameResults;
-    } else {
-      raw = frames.map(f => analyzeFrame(f, bMap, columns, mat, removedColumnIds, undefined, beamHinges2D, undefined, beamStiffnessFactor, colStiffnessFactor));
+      return result.frameResults;
     }
-    return postprocessFrameResultsForColumnFaces(raw, columns, beamsWithLoads, effectiveFrameEndReleases);
-  }, [analyzed, frames, beamsWithLoads, columns, mat, getBeamReleaseState, removedColumnIds, detectedConnections, beamStiffnessFactor, colStiffnessFactor, effectiveFrameEndReleases]);
+    return frames.map(f => analyzeFrame(f, bMap, columns, mat, removedColumnIds, undefined, beamHinges2D, undefined, beamStiffnessFactor, colStiffnessFactor));
+  }, [analyzed, frames, beamsWithLoads, columns, mat, getBeamReleaseState, removedColumnIds, detectedConnections, beamStiffnessFactor, colStiffnessFactor]);
 
   // Beam hinge map for diagram rendering
   const beamHingesMap = useMemo(() => {
@@ -1593,25 +1438,25 @@ const Index = () => {
       const conns3DLegacy: BeamOnBeamConnection[] = [];
       const raw = getFrameResults3D(
         frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, conns3DLegacy,
-        enrichedSlabs, slabProps, false, beamStiffnessFactor, colStiffnessFactor,
+        slabs, slabProps, false, beamStiffnessFactor, colStiffnessFactor,
         /* enforceReleasedZeros */ false, colRigidEndOffsets, manualJointOverrides,
       );
       return postprocessFrameResultsForColumnFaces(raw, columns, beamsWithLoads, effectiveFrameEndReleases);
     } catch {
       return [] as FrameResult[];
     }
-  }, [analyzed, frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, enrichedSlabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets, manualJointOverrides]);
+  }, [analyzed, frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, slabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets, manualJointOverrides]);
 
   // Global Frame results for comparison
   const frameResultsGF = useMemo(() => {
     if (!analyzed || frames.length === 0) return [] as FrameResult[];
     try {
-      const raw = getFrameResultsGlobalFrame(frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, autoDetectedConnections, enrichedSlabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets);
+      const raw = getFrameResultsGlobalFrame(frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, autoDetectedConnections, slabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets);
       return postprocessFrameResultsForColumnFaces(raw, columns, beamsWithLoads, effectiveFrameEndReleases);
     } catch {
       return [] as FrameResult[];
     }
-  }, [analyzed, frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, autoDetectedConnections, enrichedSlabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets]);
+  }, [analyzed, frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, autoDetectedConnections, slabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets]);
 
   // Unified Core = identical algorithm to Global Frame (both are aliases for getFrameResults3D).
   // Reuse the cached GF result to avoid a redundant full 3D solve.
@@ -1630,12 +1475,12 @@ const Index = () => {
       // 3D Legacy: نقل أحمال البلاطات إلى الجسور بنفس طريقة محرك 2D
       // (التوزيع الهندسي عبر buildSlabEdgeLoads + computeBeamLoadProfile — نظرية خط الانهيار/المساحة الرافدة)
       // وليس عبر FEM، لضمان تطابق الأحمال المنقولة بين 2D و 3D Legacy.
-      return getColumnLoads3D(frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, autoDetectedConnections, enrichedSlabs, slabProps, false, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets, manualJointOverrides);
+      return getColumnLoads3D(frames, beamsWithLoads, columns, mat, effectiveFrameEndReleases, autoDetectedConnections, slabs, slabProps, false, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets, manualJointOverrides);
     } catch {
       // Fallback to 2D if 3D fails
       return colLoadsBiaxial;
     }
-  }, [analyzed, frames, beamsWithLoads, columns, mat, colLoadsBiaxial, effectiveFrameEndReleases, autoDetectedConnections, enrichedSlabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets, manualJointOverrides]);
+  }, [analyzed, frames, beamsWithLoads, columns, mat, colLoadsBiaxial, effectiveFrameEndReleases, autoDetectedConnections, slabs, slabProps, beamStiffnessFactor, colStiffnessFactor, colRigidEndOffsets, manualJointOverrides]);
 
   const jointConnectivity = useMemo(() => {
     if (!analyzed) return [] as JointConnectivityInfo[];
@@ -1685,7 +1530,7 @@ const Index = () => {
     }
 
     // Build reverse map: partId → canonicalId  (e.g. "67-1" → "67")
-    // This is used to detect frames whose beams are parts of one carrier beam group
+    // This is used to detect frames whose beams are ALL parts of one carrier beam group
     const partToCanonical = new Map<string, string>();
     for (const [canonicalId, partIds] of Object.entries(splitBeamGroups)) {
       for (const pid of partIds) partToCanonical.set(pid, canonicalId);
@@ -1695,134 +1540,84 @@ const Index = () => {
       const fr = frameResults.find(r => r.frameId === f.id);
       if (!fr) return null;
 
-      const mergedBeamIds: string[] = [];
-      const mergedBeamsResult: FrameResult['beams'] = [];
-      const frameLocalBMap = new Map(bMap);
-      
-      const beamIdList = f.beamIds;
-      const originalBeamResults = fr.beams;
-      
-      let i = 0;
-      while (i < beamIdList.length) {
-        const currentId = beamIdList[i];
-        const currentCanon = partToCanonical.get(currentId);
-        
-        if (currentCanon) {
-          // Find how many consecutive beams belong to the exact same split-beam canonical group
-          let j = i + 1;
-          while (j < beamIdList.length && partToCanonical.get(beamIdList[j]) === currentCanon) {
-            j++;
-          }
-          
-          const partsToMergeRange = beamIdList.slice(i, j);
-          const canonicalId = currentCanon;
-          
-          // Gather results and beam objects
-          const segmentData = partsToMergeRange.map(id => {
-            const br = originalBeamResults.find(r => r.beamId === id);
-            const beam = frameLocalBMap.get(id);
-            return { id, br, beam };
-          }).filter(p => p.br !== undefined);
-          
-          if (segmentData.length > 0) {
-            // Sort parts left->right (or bottom->top) by physical position
-            const partData = segmentData.map(p => {
-              const beam = frameLocalBMap.get(p.id);
-              const posMin = beam
-                ? (beam.direction === 'horizontal'
-                    ? Math.min(beam.x1, beam.x2)
-                    : Math.min(beam.y1, beam.y2))
-                : 0;
-              return { ...p, posMin };
-            }).sort((a, b) => a.posMin - b.posMin);
-            
-            const leftPart = partData[0];
-            const rightPart = partData[partData.length - 1];
-            const totalSpan = partData.reduce((s, p) => s + (p.br?.span ?? 0), 0);
-            
-            const refBeam = partData.reduce<typeof partData[0]['beam']>((best, p) => {
-              if (!p.beam) return best;
-              if (!best) return p.beam;
-              return p.beam.b * p.beam.h >= best.b * best.h ? p.beam : best;
-            }, undefined);
-            
-            if (refBeam) {
-              const syntheticBeam = { ...refBeam, id: canonicalId, length: totalSpan * 1000 };
-              frameLocalBMap.set(canonicalId, syntheticBeam);
-              
-              mergedBeamIds.push(canonicalId);
-              mergedBeamsResult.push({
-                beamId: canonicalId,
-                span: totalSpan,
-                Mleft: leftPart.br ? leftPart.br.Mleft : 0,
-                Mmid: Math.max(...partData.map(p => p.br ? p.br.Mmid : 0)),
-                Mright: rightPart.br ? rightPart.br.Mright : 0,
-                Vu: Math.max(...partData.flatMap(p => [
-                  Math.abs(p.br?.Rleft ?? 0),
-                  Math.abs(p.br?.Rright ?? 0),
-                ])),
-                Rleft: leftPart.br ? (leftPart.br.Rleft ?? 0) : 0,
-                Rright: rightPart.br ? (rightPart.br.Rright ?? 0) : 0,
-              });
-            } else {
-              for (const part of segmentData) {
-                if (part.br) {
-                  mergedBeamIds.push(part.id);
-                  mergedBeamsResult.push(part.br);
-                }
-              }
-            }
-          }
-          
-          i = j;
-        } else {
-          const m = currentId.match(/^(.+)-(\d+)$/);
-          if (m) {
-            const baseId = m[1];
-            const existingPartsCount = beamsWithLoads.filter(b => b.id.match(new RegExp(`^${baseId}-\\d+$`))).length;
-            if (existingPartsCount === 1) {
-              const beam = frameLocalBMap.get(currentId);
-              const br = originalBeamResults.find(r => r.beamId === currentId);
-              if (beam && br) {
-                const syntheticBeam = { ...beam, id: baseId };
-                frameLocalBMap.set(baseId, syntheticBeam);
-                mergedBeamIds.push(baseId);
-                mergedBeamsResult.push({
-                  ...br,
-                  beamId: baseId,
-                });
-                i++;
-                continue;
-              }
-            }
-          }
+      // Check whether ALL beams in this frame belong to the SAME carrier-beam split group
+      const mappedCanonicals = f.beamIds.map(id => partToCanonical.get(id));
+      const uniqueCanonicals = new Set(mappedCanonicals.filter(Boolean));
+      const allAreSameCarrier =
+        uniqueCanonicals.size === 1 &&
+        mappedCanonicals.every(c => c !== undefined);
 
-          const br = originalBeamResults.find(r => r.beamId === currentId);
-          if (br) {
-            mergedBeamIds.push(currentId);
-            mergedBeamsResult.push(br);
-          }
-          i++;
-        }
+      if (allAreSameCarrier) {
+        // ── الجسر الحامل المقسّم: نعامله كجسر واحد ──────────────────────────────
+        // e.g. frame [67-1, 67-2, 67-3] → single beam "67" spanning the full length
+        const canonicalId = [...uniqueCanonicals][0]!;
+
+        // Sort parts left→right (or bottom→top) by physical position
+        const partData = fr.beams.map(br => {
+          const beam = bMap.get(br.beamId);
+          const posMin = beam
+            ? (beam.direction === 'horizontal'
+                ? Math.min(beam.x1, beam.x2)
+                : Math.min(beam.y1, beam.y2))
+            : 0;
+          return { br, beam, posMin };
+        }).sort((a, b) => a.posMin - b.posMin);
+
+        if (partData.length === 0) return null;
+
+        const leftPart  = partData[0];
+        const rightPart = partData[partData.length - 1];
+        const totalSpan = partData.reduce((s, p) => s + p.br.span, 0);
+
+        // Reference beam: largest cross-section (matches beamDesigns grouping logic)
+        const refBeam = partData.reduce<typeof partData[0]['beam']>((best, p) => {
+          if (!p.beam) return best;
+          if (!best) return p.beam;
+          return p.beam.b * p.beam.h >= best.b * best.h ? p.beam : best;
+        }, undefined);
+        if (!refBeam) return null;
+
+        // Synthetic beam object with canonical ID and total span
+        const syntheticBeam = { ...refBeam, id: canonicalId, length: totalSpan * 1000 };
+        const synBMap = new Map(bMap);
+        synBMap.set(canonicalId, syntheticBeam);
+
+        // Synthetic single-span frame (no intermediate supports)
+        const synFrame: Frame = {
+          id: f.id,
+          beamIds: [canonicalId],
+          direction: f.direction,
+          storyId: f.storyId,
+        };
+
+        // Synthetic frame result: end moments from outer parts, Mmid = max across all
+        const synFr: FrameResult = {
+          frameId: f.id,
+          beams: [{
+            beamId: canonicalId,
+            span: totalSpan,
+            Mleft:  leftPart.br.Mleft,
+            Mmid:   Math.max(...partData.map(p => p.br.Mmid)),
+            Mright: rightPart.br.Mright,
+            Vu:     Math.max(...partData.flatMap(p => [
+              Math.abs(p.br.Rleft ?? 0),
+              Math.abs(p.br.Rright ?? 0),
+            ])),
+            Rleft:  leftPart.br.Rleft  ?? 0,
+            Rright: rightPart.br.Rright ?? 0,
+          }],
+        };
+
+        return calculateFrameBentUp(synFrame, synBMap, synFr, mat, frames, secBeamIds);
       }
 
-      const synFrame: Frame = {
-        ...f,
-        beamIds: mergedBeamIds,
-      };
-      
-      const synFr: FrameResult = {
-        ...fr,
-        beams: mergedBeamsResult,
-      };
-
-      return calculateFrameBentUp(synFrame, frameLocalBMap, synFr, mat, frames, secBeamIds);
+      return calculateFrameBentUp(f, bMap, fr, mat, frames, secBeamIds);
     }).filter(Boolean) as FrameBentUpResult[];
   }, [analyzed, frames, beamsWithLoads, frameResults, mat, detectedConnections, splitBeamGroups]);
 
   const slabDesigns = useMemo(() =>
-    enrichedSlabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, enrichedSlabs, columns) })),
-    [enrichedSlabs, slabProps, mat, columns]
+    slabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, slabs, columns) })),
+    [slabs, slabProps, mat, columns]
   );
 
   const handleCanvasClick = useCallback((x: number, y: number) => {
@@ -1979,9 +1774,6 @@ const Index = () => {
       if (data.finishLoad != null) override.finishLoad = data.finishLoad;
       if (data.liveLoad != null) override.liveLoad = data.liveLoad;
       if (data.cover != null) override.cover = data.cover;
-      if (data.type != null) override.type = data.type;
-      if (data.direction != null) override.direction = data.direction;
-      if (data.ribDirection != null) override.ribDirection = data.ribDirection;
       if (Object.keys(override).length > 0) {
         dispatch({ type: 'SET_SLAB_PROPS_OVERRIDE', areaId: data.areaId, override });
       }
@@ -2246,24 +2038,12 @@ const Index = () => {
       if (beam) {
         dispatch({ type: 'SET_BEAM_OVERRIDE', beamId: beam.id, override: { b: Number(props.b), h: Number(props.h) } });
       }
-    } else if (type === 'slab') {
-      // Find the slab and update overrides via modelManager + state
+    } else if (type === 'slab' && props.thickness != null) {
+      // Find the slab and update thickness via modelManager + override
       const area = currentAreas.find(a => a.label === id || `A${a.id}` === id);
       if (area) {
-        if (props.thickness != null) {
-          modelManager.updateAreaThickness(area.id, props.thickness);
-        }
-        const override: any = {};
-        if (props.thickness != null) override.thickness = props.thickness;
-        if ((props as any).finishLoad != null) override.finishLoad = (props as any).finishLoad;
-        if ((props as any).liveLoad != null) override.liveLoad = (props as any).liveLoad;
-        if ((props as any).cover != null) override.cover = (props as any).cover;
-        if ((props as any).type != null) override.type = (props as any).type;
-        if ((props as any).direction != null) override.direction = (props as any).direction;
-        if ((props as any).ribDirection != null) override.ribDirection = (props as any).ribDirection;
-        if (Object.keys(override).length > 0) {
-          dispatch({ type: 'SET_SLAB_PROPS_OVERRIDE', areaId: area.id, override });
-        }
+        modelManager.updateAreaThickness(area.id, props.thickness);
+        dispatch({ type: 'SET_SLAB_PROPS_OVERRIDE', areaId: area.id, override: { thickness: props.thickness } });
       }
     }
     dispatch({ type: 'INC_MODEL_VERSION' });
@@ -2272,13 +2052,8 @@ const Index = () => {
 
   const handleLevelElementLongPress = useCallback((type: 'beam' | 'column' | 'slab', id: string) => {
     if (type === 'slab') {
-      const idx = slabs.findIndex(s => s.id === id);
-      if (idx !== -1) {
-        dispatch({ type: 'OPEN_ELEM_PROPS', areaId: idx + 1 });
-      } else {
-        const area = currentAreas.find(a => a.label === id || `A${a.id}` === id);
-        if (area) dispatch({ type: 'OPEN_ELEM_PROPS', areaId: area.id });
-      }
+      const area = currentAreas.find(a => a.label === id || `A${a.id}` === id);
+      if (area) dispatch({ type: 'OPEN_ELEM_PROPS', areaId: area.id });
     } else if (type === 'beam') {
       // Find the UI beam by its string ID first
       const uiBeam = beams.find(b => b.id === id);
@@ -2346,9 +2121,8 @@ const Index = () => {
 
   // Helper: get bent-up-adjusted top bars for a beam
   const getBentUpData = (beamId: string) => {
-    const canonId = beamId.match(/^(.+)-(\d+)$/)?.[1] || beamId;
     for (const fr of bentUpResults) {
-      const b = fr.beams.find(bb => bb.beamId === beamId || bb.beamId === canonId);
+      const b = fr.beams.find(bb => bb.beamId === beamId);
       if (b) return b;
     }
     return null;
@@ -2581,7 +2355,7 @@ const Index = () => {
                   <LevelPlanView
                     columns={columns}
                     beams={beamsWithLoads}
-                    slabs={enrichedSlabs}
+                    slabs={slabs}
                     stories={stories}
                     selectedElevation={modelerElevation}
                     onColumnSupportChange={handleColumnSupportChange}
@@ -2604,7 +2378,7 @@ const Index = () => {
                   <ModelCanvas
                     nodes={currentNodes}
                     frames={currentFrames}
-                    areas={currentAreas}
+                    areas={[]}
                     activeTool={activeTool}
                     onCanvasClick={handleCanvasClick}
                     onNodeClick={handleNodeClick}
@@ -2692,9 +2466,6 @@ const Index = () => {
                       <ParamInput label="ارتفاع الجسر (مم)" value={beamH} onChange={v => dispatch({ type: 'SET_BEAM_H', value: v })} />
                       <ParamInput label="عرض العمود (مم)" value={colB} onChange={v => dispatch({ type: 'SET_COL_B', value: v })} />
                       <ParamInput label="عمق العمود (مم)" value={colH} onChange={v => dispatch({ type: 'SET_COL_H', value: v })} />
-                      <div className="col-span-2">
-                        <ParamInput label="ارتفاع الدور / العمود الافتراضي (مم)" value={colL} onChange={v => dispatch({ type: 'SET_COL_L', value: v })} />
-                      </div>
                     </CardContent>
                     <CardFooter className="pt-2">
                       <Button size="sm" className="w-full h-9 text-xs" onClick={() => dispatch({ type: 'SAVE_SNAPSHOT', message: 'تم حفظ أبعاد العناصر ✓' })}>
@@ -2727,7 +2498,7 @@ const Index = () => {
                     dispatch({ type: 'SET_COL_B', value: result.colB });
                     dispatch({ type: 'SET_COL_H', value: result.colH });
                     dispatch({ type: 'SET_MAT', mat: result.matProps });
-                    dispatch({ type: 'SET_COL_L', value: result.slabProps.thickness > 0 ? state.colL : 3000 });
+                    dispatch({ type: 'SET_COL_L', value: result.slabProps.thickness > 0 ? state.colL : 4000 });
                     dispatch({ type: 'SAVE_SNAPSHOT', message: 'تم تطبيق التصميم التلقائي ✓' });
                   }}
                 />
@@ -3842,7 +3613,7 @@ const Index = () => {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            {['البلاطة','X1','Y1','X2','Y2','الدور','نوع البلاطة','اتجاه توزيع الحمل','توزيع الحمل الفعلي','Lx (م)','Ly (م)'].map(h => (
+                            {['البلاطة','X1','Y1','X2','Y2','الدور','Lx (م)','Ly (م)','النوع'].map(h => (
                               <TableHead key={h} className="text-xs">{h}</TableHead>
                             ))}
                           </TableRow>
@@ -3861,55 +3632,9 @@ const Index = () => {
                                 <TableCell><Input type="number" step="any" value={s.x2} onChange={e => dispatch({type:'UPDATE_SLAB',index:i,key:'x2',value:e.target.value})} className="h-8 w-16 font-mono text-xs" /></TableCell>
                                 <TableCell><Input type="number" step="any" value={s.y2} onChange={e => dispatch({type:'UPDATE_SLAB',index:i,key:'y2',value:e.target.value})} className="h-8 w-16 font-mono text-xs" /></TableCell>
                                 <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{getStoryLabel(s.storyId)}</TableCell>
-                                <TableCell>
-                                  <select
-                                    value={s.type || 'solid'}
-                                    onChange={e => dispatch({type:'UPDATE_SLAB', index: i, key: 'type', value: e.target.value})}
-                                    className="h-8 rounded border border-input bg-background px-2 py-1 text-xs outline-none"
-                                  >
-                                    <option value="solid">مصمتة (Solid)</option>
-                                    <option value="ribbed">معصبة (Ribbed)</option>
-                                  </select>
-                                </TableCell>
-                                <TableCell>
-                                  <select
-                                    value={s.direction || 'auto'}
-                                    onChange={e => {
-                                      const val = e.target.value;
-                                      dispatch({type:'UPDATE_SLAB', index: i, key: 'direction', value: val});
-                                      if (val === 'one-way-x') {
-                                        dispatch({type:'UPDATE_SLAB', index: i, key: 'ribDirection', value: 'x'});
-                                      } else if (val === 'one-way-y') {
-                                        dispatch({type:'UPDATE_SLAB', index: i, key: 'ribDirection', value: 'y'});
-                                      }
-                                    }}
-                                    className="h-8 rounded border border-input bg-background px-2 py-1 text-xs outline-none font-medium"
-                                  >
-                                    <option value="auto">تلقائي (حسب الأبعاد)</option>
-                                    <option value="one-way-x">اتجاه واحد X (جسور رأسية)</option>
-                                    <option value="one-way-y">اتجاه واحد Y (جسور أفقية)</option>
-                                    <option value="two-way">اتجاهين (Two-Way)</option>
-                                  </select>
-                                </TableCell>
-                                <TableCell className="text-xs">
-                                  {s.type === 'ribbed' ? (
-                                    <span className="text-violet-600 dark:text-violet-400 font-bold">عصب اتجاه واحد ({(s.ribDirection || 'x').toUpperCase()})</span>
-                                  ) : s.direction === 'one-way-x' ? (
-                                    <span className="text-blue-600 dark:text-blue-400 font-bold">اتجاه واحد (X)</span>
-                                  ) : s.direction === 'one-way-y' ? (
-                                    <span className="text-blue-600 dark:text-blue-400 font-bold">اتجاه واحد (Y)</span>
-                                  ) : s.direction === 'two-way' ? (
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">اتجاهين</span>
-                                  ) : sd?.isOneWay ? (
-                                    <span className="text-slate-600 dark:text-slate-400">تلقائي (اتجاه واحد)</span>
-                                  ) : sd ? (
-                                    <span className="text-slate-600 dark:text-slate-400">تلقائي (اتجاهين)</span>
-                                  ) : (
-                                    '—'
-                                  )}
-                                </TableCell>
                                 <TableCell className="font-mono text-xs">{sd?.lx.toFixed(1) ?? '—'}</TableCell>
                                 <TableCell className="font-mono text-xs">{sd?.ly.toFixed(1) ?? '—'}</TableCell>
+                                <TableCell className="text-xs">{sd?.isOneWay ? 'اتجاه واحد' : sd ? 'اتجاهين' : '—'}</TableCell>
                               </TableRow>
                             );
                           })}
@@ -5383,12 +5108,12 @@ const Index = () => {
                 />
               </TabsContent>
               <TabsContent value="analysis-slab" className="flex-1 overflow-y-auto p-3 md:p-4 mt-0 pb-20 md:pb-4">
-                <SlabAnalysisPanel slabs={enrichedSlabs} slabProps={slabProps} mat={mat} />
+                <SlabAnalysisPanel slabs={slabs} slabProps={slabProps} mat={mat} />
               </TabsContent>
               <TabsContent value="analysis-slab-load-diag" className="flex-1 overflow-y-auto p-3 md:p-4 mt-0 pb-20 md:pb-4">
                 <SlabLoadDiagnosticPanel
                   beams={beamsWithLoads}
-                  slabs={enrichedSlabs}
+                  slabs={slabs}
                   columns={columns}
                   slabProps={slabProps}
                   mat={mat}
@@ -6240,31 +5965,23 @@ const Index = () => {
                   <CardContent className="overflow-x-auto">
                     <Table>
                       <TableHeader><TableRow>
-                        {['اسم البلاطة', 'سماكة البلاطة', 'التسليح في الاتجاه x', 'التسليح في الاتجاه y'].map(h => <TableHead key={h} className="text-xs">{h}</TableHead>)}
+                        {['الدور','البلاطة','Lx','Ly','h','Wu','تسليح قصير','تسليح طويل'].map(h => <TableHead key={h} className="text-xs">{h}</TableHead>)}
                       </TableRow></TableHeader>
                       <TableBody>
                         {stories.map(story =>
                           (isAllStories || story.id === selectedStoryId) &&
-                          slabDesigns.map(s => {
-                            const slab = slabs.find(sl => sl.id === s.id);
-                            if (slab && slab.storyId !== story.id) return null;
-                            let xIsShort = true;
-                            if (slab) {
-                              const dx = Math.abs(slab.x2 - slab.x1);
-                              const dy = Math.abs(slab.y2 - slab.y1);
-                              xIsShort = dx <= dy;
-                            }
-                            const xDir = xIsShort ? s.design.shortDir : s.design.longDir;
-                            const yDir = xIsShort ? s.design.longDir : s.design.shortDir;
-                            return (
-                              <TableRow key={`${story.id}-${s.id}`} className="cursor-pointer" onClick={() => handleSelectElement('slab', s.id)}>
-                                <TableCell className="font-mono text-xs">{isAllStories ? `${story.label} - ${s.id}` : s.id}</TableCell>
-                                <TableCell className="font-mono text-xs">{s.design.hUsed} mm</TableCell>
-                                <TableCell className="font-mono text-xs">{xDir.bars}Φ{xDir.dia}/m</TableCell>
-                                <TableCell className="font-mono text-xs">{yDir.bars}Φ{yDir.dia}/m</TableCell>
-                              </TableRow>
-                            );
-                          })
+                          slabDesigns.map(s => (
+                            <TableRow key={`${story.id}-${s.id}`} className="cursor-pointer" onClick={() => handleSelectElement('slab', s.id)}>
+                              <TableCell className="text-xs font-medium text-muted-foreground">{story.label}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.id}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.design.lx.toFixed(1)}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.design.ly.toFixed(1)}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.design.hUsed}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.design.Wu.toFixed(2)}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.design.shortDir.bars}Φ{s.design.shortDir.dia}</TableCell>
+                              <TableCell className="font-mono text-xs">{s.design.longDir.bars}Φ{s.design.longDir.dia}</TableCell>
+                            </TableRow>
+                          ))
                         )}
                       </TableBody>
                     </Table>
@@ -6389,12 +6106,12 @@ const Index = () => {
               {/* BOQ - Bill of Quantities */}
               <BOQPanel
                 stories={stories}
-                slabs={enrichedSlabs}
+                slabs={slabs}
                 beams={beamsWithLoads}
                 columns={columns}
                 beamDesigns={beamDesigns as any}
                 colDesigns={colDesigns}
-                slabDesigns={enrichedSlabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, enrichedSlabs, columns) })) as any}
+                slabDesigns={slabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, slabs, columns) })) as any}
                 slabProps={slabProps}
                 analyzed={hasDesignResults}
                 foundationResults={foundationResults.length > 0 ? foundationResults : undefined}
@@ -6403,12 +6120,12 @@ const Index = () => {
               {/* Main Export Panel with Floor Selector */}
               <ExportPanel
                 stories={stories}
-                slabs={enrichedSlabs}
+                slabs={slabs}
                 beams={beamsWithLoads}
                 columns={columns}
                 beamDesigns={beamDesigns as any}
                 colDesigns={colDesigns}
-                slabDesigns={enrichedSlabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, enrichedSlabs, columns) }))}
+                slabDesigns={slabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, slabs, columns) }))}
                 mat={mat}
                 slabProps={slabProps}
                 projectName={titleBlockConfig.projectName || 'Structural Design Studio'}
@@ -6416,7 +6133,6 @@ const Index = () => {
                 analyzed={hasDesignResults}
                 foundationResults={foundationResults}
                 foundationMat={foundationMat}
-                bentUpResults={bentUpResults}
               />
 
               {/* Additional quick export buttons */}
@@ -6424,25 +6140,25 @@ const Index = () => {
                 <Card>
                   <CardHeader><CardTitle className="text-sm">تقرير PDF</CardTitle></CardHeader>
                   <CardContent className="space-y-2">
-                     <Button className="w-full min-h-[44px]" disabled={!hasDesignResults} onClick={() => {
-                       const slabDesignsData = enrichedSlabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, enrichedSlabs, columns) }));
-                       generateStructuralReport(enrichedSlabs, beamsWithLoads, columns, frames, frameResults, beamDesigns as any, colDesigns, slabDesignsData, mat, slabProps, 'Structural Design Studio', stories);
-                     }}>تقرير التصميم الإنشائي</Button>
+                    <Button className="w-full min-h-[44px]" disabled={!hasDesignResults} onClick={() => {
+                      const slabDesignsData = slabs.map(s => ({ ...s, design: designSlab(s, slabProps, mat, slabs, columns) }));
+                      generateStructuralReport(slabs, beamsWithLoads, columns, frames, frameResults, beamDesigns as any, colDesigns, slabDesignsData, mat, slabProps, 'Structural Design Studio', stories);
+                    }}>تقرير التصميم الإنشائي</Button>
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardHeader><CardTitle className="text-sm">تصدير DXF</CardTitle></CardHeader>
                   <CardContent className="space-y-2">
-                    <Button className="w-full min-h-[44px]" variant="outline" onClick={() => downloadDXF(generateStructuralDXF(enrichedSlabs, beamsWithLoads, columns), 'structural_plan.dxf')}>مخطط إنشائي</Button>
-                    <Button className="w-full min-h-[44px]" variant="outline" onClick={() => downloadDXF(generateBeamLayoutDXF(beamsWithLoads, columns, enrichedSlabs), 'beam_layout.dxf')}>مخطط الجسور</Button>
-                    <Button className="w-full min-h-[44px]" variant="outline" onClick={() => downloadDXF(generateColumnLayoutDXF(columns, enrichedSlabs), 'column_layout.dxf')}>مخطط الأعمدة</Button>
+                    <Button className="w-full min-h-[44px]" variant="outline" onClick={() => downloadDXF(generateStructuralDXF(slabs, beamsWithLoads, columns), 'structural_plan.dxf')}>مخطط إنشائي</Button>
+                    <Button className="w-full min-h-[44px]" variant="outline" onClick={() => downloadDXF(generateBeamLayoutDXF(beamsWithLoads, columns, slabs), 'beam_layout.dxf')}>مخطط الجسور</Button>
+                    <Button className="w-full min-h-[44px]" variant="outline" onClick={() => downloadDXF(generateColumnLayoutDXF(columns, slabs), 'column_layout.dxf')}>مخطط الأعمدة</Button>
                     <Button className="w-full min-h-[44px]" variant="outline" disabled={!hasDesignResults} onClick={() => {
                       const rebarData = beamDesigns.map(d => {
                         const beam = beamsWithLoads.find(b => b.id === d.beamId);
                         return beam ? { beamId: d.beamId, b: beam.b, h: beam.h, x1: beam.x1, y1: beam.y1, x2: beam.x2, y2: beam.y2, topBars: Math.max(d.flexLeft.bars, d.flexRight.bars), topDia: d.flexLeft.dia, botBars: d.flexMid.bars, botDia: d.flexMid.dia, stirrups: d.shear.stirrups } : null;
                       }).filter(Boolean) as any[];
-                      downloadDXF(generateReinforcementDXF(enrichedSlabs, beamsWithLoads, columns, rebarData), 'reinforcement.dxf');
+                      downloadDXF(generateReinforcementDXF(slabs, beamsWithLoads, columns, rebarData), 'reinforcement.dxf');
                     }}>مخطط التسليح</Button>
                   </CardContent>
                 </Card>
@@ -6712,20 +6428,7 @@ const Index = () => {
         open={elemPropsOpen}
         onClose={() => dispatch({ type: 'CLOSE_ELEM_PROPS' })}
         frame={elemPropsFrameId != null ? currentFrames.find(f => f.id === elemPropsFrameId) : null}
-        area={elemPropsAreaId != null ? (
-          currentAreas.find(a => a.id === elemPropsAreaId) ||
-          currentAreas.find(a => a.label === enrichedSlabs[elemPropsAreaId - 1]?.id) ||
-          (() => {
-            const s = enrichedSlabs[elemPropsAreaId - 1];
-            if (!s) return null;
-            return {
-              id: elemPropsAreaId,
-              nodeIds: [],
-              thickness: s.thickness ?? slabProps.thickness,
-              label: s.id,
-            };
-          })()
-        ) : null}
+        area={elemPropsAreaId != null ? currentAreas.find(a => a.id === elemPropsAreaId) : null}
         nodeI={elemPropsFrameId != null ? (() => { const f = currentFrames.find(fr => fr.id === elemPropsFrameId); return f ? currentNodes.find(n => n.id === f.nodeI) : null; })() : null}
         nodeJ={elemPropsFrameId != null ? (() => { const f = currentFrames.find(fr => fr.id === elemPropsFrameId); return f ? currentNodes.find(n => n.id === f.nodeJ) : null; })() : null}
         slabProps={elemPropsAreaId != null ? { ...slabProps, ...(slabPropsOverrides[elemPropsAreaId] || {}) } : null}
